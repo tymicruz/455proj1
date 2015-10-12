@@ -111,11 +111,12 @@ main(int argc, char *argv[ ], char *env[])
 
   printf("********  processing loop  *********\n");
   while (1){
+  	//n = read(sock, line, MAX);
     printf("\ninput a line : ");
     bzero(line, MAX);                // zero out line[ ]
 	 __fpurge(stdin);
     fgets(line, MAX, stdin);         // get a line (end with \n) from stdin
-
+    i = 0;
     line[strlen(line)-1] = 0;        // kill \n at end
     if (line[0]==0){                  // exit if NULL line
      continue;}//exit(0);

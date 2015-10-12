@@ -148,6 +148,7 @@ main(int argc, char *argv[], char* env[])
 
      // Processing loop
   		while(1){
+  			printf("waiting\n");
   			n = read(newsock, line, MAX);
   			printf("%d things\n", n);
   			if (n==0){

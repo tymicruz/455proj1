@@ -12,30 +12,34 @@
 #include <time.h>
 #include <dirent.h>
 
-#define  MAX 256
+enum state_name{
+	CONNECT,
+	LOGIN,
+	PASSWORD,
+  FINALE,
+  KILL
+} server_state;
 
+#define  MAX 256
+#define NUM_IDS 5
 // Define variables:
 struct sockaddr_in  server_addr, client_addr, name_addr;
 struct hostent *hp;
 
-char *t1 = "xwrxwrxwr-------";
-char *t2 = "----------------";
-
 int  sock, newsock;                  // socket descriptors
 int  serverPort;                     // server port number
 int  r, length, n;                   // help variablesi
-int fd;
-int pid = 0, status = 0;
-FILE *fp;
-char cwd[MAX];//current working directory
-char hd[MAX];//homedirectory
 
-int getRequest(int myargc, char* myargv[]);
-int putRequest(int myargc, char* myargv[]);
-int doCmd (int argc, char* argv[]);
-char *getHomeDir(char *env[]);
-int ls_dir(char *dname);
-int ls_file(char *fname);
+int ids[NUM_IDS] = {1, 22, 333, 4444, 1738};
+char* names[NUM_IDS] = {"carl", "mike", "su", "tyler", "monty"};
+char* passwords[NUM_IDS] = {"one1", "two2", "three3", "four4", "remyboyz"};
+
+char* congrats[3] = { "Congratulations ", "; you've just revealed the password for ", " to the world!"};
+char* password_fail = "Password incorrect.";
+char user_id[10];
+
+int validate(char *buf);
+int password(char *buf, int user);
 
 // Server initialization code:
 
@@ -98,22 +102,21 @@ int server_init(char *name, int port)
 main(int argc, char *argv[], char* env[])
 {
 	char *hostname;
-	char line[MAX];
-	char linecopy[MAX];
-	char token[32][64];
-	char* word;
-	char* cmd;
-	char *myargv[32];
-	int myargc = 0, i = 0;
-	bzero(cwd, MAX);
-	int port = 0;
+	char buf[MAX], mini_buf[1];
 
-	strcpy(hd,getHomeDir(env));
+	int i = 0, user = 0;
+	int port = 0;
+  bzero(buf, MAX);
+
+  uint16_t network_byte_order = 0;
+    server_state = CONNECT;
+
+	//strcpy(hd,getHomeDir(env));
 
    if (argc < 2) //default to localhost 127.0.0.1:3000 if no args given
    {
-   		hostname = "localhost";
-   		port = 3000;
+   	hostname = "localhost";
+   	port = 3000;
    }
   	else if (argc < 3) //if only one arg, assume it is port #
   	{	
@@ -127,519 +130,284 @@ main(int argc, char *argv[], char* env[])
   	}
 
   	server_init(hostname, port); 
-
+ 
    // Try to accept a client request
   	while(1){
-  		printf("server: accepting new connection ....\n"); 
 
-     // Try to accept a client connection as descriptor newsock
-  		length = sizeof(client_addr);
-  		newsock = accept(sock, (struct sockaddr *)&client_addr, &length);
-  		printf("%d\n", newsock);
-  		if (newsock < 0){
-  			printf("server: accept error\n");
-  			exit(1);
+      bzero(buf, MAX);
+      bzero(mini_buf, 1);
+
+  		switch(server_state)
+  		{
+
+  			case CONNECT:
+          printf("\nCONNECT STATE:\n");
+          printf("server: accepting new connection ....\n");
+       // Try to accept a client connection as descriptor newsock
+    			length = sizeof(client_addr);
+    			newsock = accept(sock, (struct sockaddr *)&client_addr, &length);
+    			printf("client socket: %d\n", newsock);
+    			if (newsock < 0){
+    				printf("server: accept error\n");
+    				exit(1);
+    			}
+    			printf("server: accepted a client connection from\n");
+    			printf("-----------------------------------------------\n");
+    			printf("        IP=%s  port=%d\n", (char*)inet_ntoa(client_addr.sin_addr.s_addr),
+    			ntohs(client_addr.sin_port));
+    			printf("-----------------------------------------------\n");
+    			printf("sending \"Welcome\\n\" message\n");
+
+    			i = send(newsock, "Welcome\n", 8, 0);
+
+    			server_state = LOGIN;
+    			break;
+
+
+  			case LOGIN:
+          printf("\nLOGIN STATE:\n");
+
+          //recv num id from client
+    			if(n = recv(newsock, buf, MAX, 0))
+          {
+            printf("(id)received %d bytes\n", n);
+            //printf("client num id: %s", buf);
+          }
+          else
+          {
+            //client died probably
+            server_state = KILL; 
+          }
+
+          //recv name from client (s(ave in same buffer start at offset, n)
+          if(server_state != KILL && (n = recv(newsock, (buf + n), MAX - n, 0)))
+          {
+            printf("(name)received %d bytes\n", n);
+            printf("client info:\n%s", buf);
+          }
+          else//no room left in buffer mayber or client dies
+          {
+            server_state = KILL; 
+          }
+
+          //validate the user's info
+          if(server_state != KILL )
+          {
+            if(user = validate(buf))
+            {
+              user--;
+              printf("sending \"Success\\n\"\n");
+              i = send(newsock, "Success\n", 8, 0);
+              server_state = PASSWORD;
+            }
+            else
+            {
+              printf("sending \"Failure\\n\"\n");
+              i = send(newsock, "Failure\n", 8, 0);
+              server_state = KILL;
+            }
+          }
+
+          break;
+
+        case PASSWORD:
+          printf("\nPASSWORD STATE:\n");
+          if(n = recv(newsock, &network_byte_order, sizeof(uint16_t), 0))
+          {
+            network_byte_order = ntohs(network_byte_order);
+            printf("password len: %d\n", network_byte_order);
+
+            i = 0;
+            //__fpurge()
+              //get password (one byte at a time)
+            do{
+
+              n = recv(newsock, mini_buf, 1, 0);
+              printf("recv pw[%d]: %c\n", i, mini_buf[0]);              
+              buf[i++] = mini_buf[0];//get one char at a time
+
+              //if n == 0 kill connection
+
+            }while(i < network_byte_order && n);
+
+            buf[i] = 0; //null terminate the string 
+
+            if(password(buf, user))
+            {
+
+              printf("password matched\n");
+
+              //create message
+              n = 0;
+              bzero(buf, MAX);
+
+              //add congrats part 1
+              i = strlen(congrats[0]);
+              memcpy(buf, congrats[0], i);
+              n += i;
+
+              //add name 
+              i = strlen(names[user]);
+              memcpy(buf + n, names[user], i);
+              n += i;
+
+              //add congrats part 2
+              i = strlen(congrats[1]);
+              memcpy(buf + n, congrats[1], i);
+              n += i;
+
+              //add id
+              sprintf(user_id, "%d", ids[user]);
+              i = strlen(user_id);
+              memcpy(buf + n, user_id, i);
+              n += i;
+
+              //add congrats part 3
+              i = strlen(congrats[2]);
+              memcpy(buf + n, congrats[2], i);
+              n += i;
+
+              network_byte_order = htons(((uint16_t)n));
+              printf("sending message length: htons(%d)\n", n);
+              //stop at new-line or null char or i max which ever 1st
+              send(newsock, &network_byte_order, sizeof(uint16_t), 0);
+              printf("sending message:\n");
+
+              //send message one byte at a time
+              i = 0;
+              do
+              {
+                mini_buf[0] = buf[i++];
+                printf("%c", mini_buf[0]);
+                send(newsock, mini_buf, 1, 0);
+
+              }while(i < n);  
+
+               //printf("final message %d:\n%s\n", n, buf);
+              //send(newsock, buf, n, 0);
+              buf[i] = 0;
+              printf("\n");
+              
+
+              //send(newsock, &network_byte_order, size(uint16_t), 0);
+            }
+            else
+            {
+              bzero(buf, MAX);
+              printf("password doesn't match. kill client.\n");
+              
+              i = 0;
+              n = strlen(password_fail);
+
+              network_byte_order = htons(((uint16_t)n));
+              printf("sending message length: htons(%d)\n", n);
+              //stop at new-line or null char or i max which ever 1st
+              send(newsock, &network_byte_order, sizeof(uint16_t), 0);
+              printf("sending message:\n");
+
+              //send message one byte at a time
+              i = 0;
+              do
+              {
+                mini_buf[0] = password_fail[i++];
+                printf("%c", mini_buf[0]);
+                send(newsock, mini_buf, 1, 0);
+
+              }while(i < n);  
+
+               //printf("final message %d:\n%s\n", n, buf);
+              //send(newsock, buf, n, 0);
+              printf("\n");
+              //send(newsock, "Password incorrect.", MAX,0);
+              //server_state = KILL;
+            }
+          }
+          else
+          {
+            printf("no password or client died\n");
+            server_state = KILL;
+          }
+          
+          server_state = KILL;
+          break;
+
+        case KILL:
+        printf("killing socket %d\n", newsock);
+          close(newsock);
+          server_state = CONNECT;
+          //exit(newsock);
+
+  			}
   		}
-  		printf("server: accepted a client connection from\n");
-  		printf("-----------------------------------------------\n");
-  		printf("        IP=%s  port=%d\n", (char*)inet_ntoa(client_addr.sin_addr.s_addr),
-  			ntohs(client_addr.sin_port));
-  		printf("-----------------------------------------------\n");
+  	}
 
-     // Processing loop
-  		while(1){
-  			n = read(newsock, line, MAX);
-  			printf("%d things\n", n);
-  			if (n==0){
-  				printf("server: client died, server loops\n");
-  				close(newsock);
-  				break;
-  			}
-
-      // show the line string
-  			printf("server: read  n=%d bytes; line=[%s]\n", n, line);
-  			strcpy(linecopy, line);
-		//-----tokenize string
-  			word = strtok(linecopy, " ");
-  			i = 0;
-  			myargc = 0;
-
-  			while(word)
-  			{
-  				myargc++;
-  				strcpy(token[i++], word);
-  				word = strtok(NULL, " ");
-  			}
-
-  			myargc = i;
-
-  			for(i = 0; i < myargc; i++)
-  			{
-  				myargv[i] = token[i];
-  			}
-
-		myargv[i] = 0;//null terminate
-		cmd = myargv[0];
-		//------tokenize string
-
-		doCmd(myargc, myargv);
-		/**if(strcmp(cmd, "get") == 0)
-		{
-			getRequest(myargc, myargv);
-		}else if(strcmp(cmd, "put") == 0)
-		{
-			putRequest(myargc, myargv);
-		}else if(strcmp(cmd, "pwd")==0){
-		
-		}else{
-			strcat(line, " didn't do that");
-			n = write(newsock, line, MAX);
-		}**/
-
-			printf("\n");	
-      //strcat(line, " ECHO");
-
-
-      // send the echo line to client 
-      //n = write(newsock, line, MAX);
-
-		//write(newsock, "1", 2);	
-      //printf("server: wrote n=%d bytes; ECHO=[%s]\n", n, line);
-      //printf("server: ready for next request\n");
-		}
-	}
-}
-
-int getRequest(int myargc, char* myargv[])
+int validate(char *buf)
 {
-	int m = 0, i, r;//local r
-	char buf[1024];
-	struct stat fstat, *sp;
-	bzero(buf, 1024);
-	
-	sp = &fstat;
-	
-	if(myargc > 1)
-	{
-		if(lstat(myargv[1], &fstat) < 0)
-		{
-					write(newsock, "0", 2);//tell client to go away
-					printf("can't lstat file\n");
-					return 1;
-				}
-				else
-				{
-					if((sp->st_mode & 0xF000) == 0x4000)//can't 
-					{
-						printf("not going to give a dir\n");
-						write(newsock, "0", 2);//tell client to go away
-						return 0;
-					}
-				}
-				
-				//tell clients it's all good
-				fd = open(myargv[1], O_RDONLY);
+  int i = 0, newlines = 0, n1 = 0, n2 = 0;
+  char *id = 0, *name = 0;
+  int num_id = 0;
 
-				if(fd < 0)
-				{
-					printf("file open fail\n");
-					write(newsock, "0", 2);//fail
-				}
+  while(*(buf + i) && i < MAX)
+  {
+    if(*(buf + i) == '\n')
+    {
+      newlines++;
 
-				write(newsock, "1", 2);//sucess
-				printf("putting file:%s to client\n", myargv[1]);	
-				while(m = read(fd, buf, 1024))//read file
-				{
-					//printf("%d\n", m);
-					//write to client
-					write(newsock, buf, 1024);//right to sock
+      //get position of first new-line
+      if(newlines == 1)
+      {
+        n1 = i;
+      }
+      //get position of second new-line
+      else if (newlines == 2)
+      {
+        n2 = i;
+      }
+    }
 
-					if(m >= 1024)
-					{
-						write(newsock, "1", 2);//let client know, more to come
-					}
-					else
-					{
-						write(newsock, "0", 2);//let client know done
-					}
-				}
-
-				//write(newsock, "", 1);
-				close(fd);
-
-			}
-			else
-			{
-				write(newsock, "0", 2);
-
-				//tell client fail
-			}
-		}
-
-		int putRequest(int myargc, char* myargv[])
-		{
-			char good[2];
-			int m = 0, i = 0;
-			char buf[1024];
-			bzero(buf, 1024);
-	//tell client to goahead and start putting out
-			write(newsock, "1", 2);
-
-			m = read(newsock, good, 2);
-
-			if(strcmp(good, "0") == 0){return 0;}
-
-	fp = fopen(myargv[1], "w");//open a file
-
-	while((m = read(newsock, buf, 1024)))
-	{
-		for(i=0; i<m; i++)
-		{
-			if(buf[i] == 0 || buf[i] == EOF)
-			{
-				bzero(buf, 1024);
-				i = n;
-				continue;
-				break;
-			}else
-			{
-				putchar(buf[i]);
-				fputc(buf[i], fp);
-			}
-		}
-		read(newsock, good, 2);//see if done
-
-		if(strcmp(good, "0") == 0)
-		{
-			break;
-		}
-
-	}
-	printf("done - client out it on you!\n");
-	fclose(fp);
-
-}
-
-int doCmd (int myargc, char* myargv[])//command will not b null when called
-{
-	char answer[MAX];
-	struct stat fstat, *sp;
-
-	//each command must send a write(newsock, "1" 2); signal to tell client to start listening
-	//function will only be called for local commands
-	char *cmd = myargv[0];
-	//cmd = removeL(cmd);
-
-	char *op = 0;
-	sp = &fstat;
-	bzero(answer, MAX);
-
-	if(myargc > 1)
-	{
-		op = myargv[1];
-	}//otherwise op is 0
-	
-	if(strcmp(cmd, "pwd") == 0)
-	{
-		write(newsock, "1", 2);//tell server, "we good" so it will start listening
-		getcwd(cwd, MAX);
-		write(newsock, cwd, MAX);
-		printf("client request pwd: %s\n", cwd);
-		return 1;
-	}	
-	if(strcmp(cmd, "ls") == 0)
-	{
-		write(newsock, "1", 2);//tell client to start listening
-		if((myargc > 1) && lstat(myargv[1], &fstat) < 0)
-		{	
-			write(newsock, "0", 2);
-			printf("I couldn't lstat %s\n", myargv[1]);
-			//sprintf(answer, "I couldn't lstat %s\n", myargv[1]);
-			return 0;
-		}else if(myargc > 1)
-		{
-			if(S_ISDIR(sp->st_mode))
-			{
-				ls_file(myargv[1]);
-				write(newsock, "0", 2);//tell client you are done
-				return 0;
-			}else{
-				ls_file(myargv[1]);
-				write(newsock, "0", 2);//tell client you are done
-				return 0;
-			}
-		}
-
-		if(myargc == 1)
-		{
-			printf("ls current dir\n");
-			ls_dir("./");
-			return 0;
-		}
-
-		printf("wtf happen with lls\n");
-		//need to ls all files
-		
-		return 1;
-	}	
-	if(strcmp(cmd, "cd") == 0)
-	{
-		write(newsock, "1", 2);//tell client to start listening
-		if(!(chdir(op) < 0))//if argv available and chdir success
-		{
-			//write(newsock, "1", 2);
-			printf("client request: cd OK\n");
-			strcpy(answer, "cd OK");
-			write(newsock, answer, MAX);
-		}else if(myargc == 1)
-		{
-			//write(newsock, "1", 2);
-			printf("client cd request to nothing: cd to HOME dir\n");
-			chdir(hd);
-			//printf("client request: cd OK\n");
-			strcpy(answer, "cd to HOME dir");
-			write(newsock, answer, MAX);
-		}
-		else
-		{
-			//write(newsock, "1", 2);
-			printf("client request: cd FAILED\n");
-			strcpy(answer, "cd FAILED");
-			write(newsock, answer, MAX);
-		}
-		return 1;
-	}	
-	if(strcmp(cmd, "mkdir") == 0)
-	{
-		write(newsock, "1", 2);//tell client to start listening
-		if(mkdir(op, 0777) < 0)
-		{
-			printf("mkdir FAIL -> errno=%d : %s\n", errno, strerror(errno));
-			sprintf(answer, "mkdir FAIL -> errno=%d : %s", errno, strerror(errno));
-			write(newsock, answer, MAX);
-			
-		}else
-		{
-			printf("mkdir %s OK\n", op);
-			sprintf(answer, "mkdir %s OK", op);
-			write(newsock, answer, MAX);
-		}
-		return 1;
-	}	
-	if(strcmp(cmd, "rmdir") == 0)
-	{
-		write(newsock, "1", 2);//tell client to start listening
-		if(rmdir(op) < 0)
-		{
-			
-			printf("rmdir FAIL -> errno=%d : %s\n", errno, strerror(errno));
-			sprintf(answer, "rmdir FAIL -> errno=%d : %s", errno, strerror(errno));
-			write(newsock, answer, MAX);
-			
-			//
-		}else
-		{
-			printf("rmdir %s OK\n", op);
-			sprintf(answer, "rmdir %s OK", op);
-			write(newsock, answer, MAX);
-
-			//
-		}
-		return 1;
-	}	
-	if(strcmp(cmd, "rm") == 0)
-	{
-		write(newsock, "1", 2);//tell client to start listening 
-		if(unlink(op) < 0)
-		{
-			printf("rm FAIL -> errno=%d : %s\n", errno, strerror(errno));
-			sprintf(answer, "rm FAIL -> errno=%d : %s", errno, strerror(errno));
-			write(newsock, answer, MAX);
-
-		}
-		else
-		{
-			printf("rm %s OK\n", op);
-			sprintf(answer, "rm %s OK", op);
-			write(newsock, answer, MAX);
-		}
-		return 1;
-	}	
-	if(strcmp(cmd, "get") == 0)
-	{
-		getRequest(myargc, myargv);
-		return 2;//need to work with server
-	}	
-	if(strcmp(cmd, "put") == 0)
-	{
-		putRequest(myargc, myargv);		
-		return 2;
-	}	
-	if(strcmp(cmd, "cat") == 0)
-	{
-		write(newsock, "1", 2);//without this client with be stuck
-		printf("I don't cat\n");
-		sprintf(answer, "I don't cat");
-		write(newsock, answer, MAX);
-		//tell client you don't cat
-	}
-	if(strcmp(cmd, "quit") == 0)//should never get this
-	{
-		exit(1);
-	}
-
-	return 0;
-}
-
-char *getHomeDir(char *env[])
-{
-	int i = 0;
-	char line[MAX];
-	char *hd = 0;
-
-	//assuming HOME path exists
-	while(env[i])
-	{
-		strcpy(line, env[i]);
-		hd = strtok(line, "=");
-		
-		if(strcmp(hd, "HOME") == 0)
-		{
-			//assuming HOME=something
-			hd = strtok(NULL, "=");
-			break;
-		}
-		i++;
-	}
-
-	return hd;
-}
-
-int ls_file(char *fname)
-{
-	struct stat fstat, *sp;
-	int r, i;
-	char ftime[64];
-	char answer[MAX];
-	char ans[MAX];
-	bzero(answer, MAX);
-	bzero(ans, MAX); 
-	strcpy(ans, "");
-
-	sp = &fstat;
-  //printf("name=%s\n", fname); getchar();
-
-	if ( (r = lstat(fname, &fstat)) < 0){
-		printf("can't stat %s\n", fname);
-		return 0;
-     //exit(1);
-	}
-	write(newsock, "1", 2);//tell client to listen
-
-	if ((sp->st_mode & 0xF000) == 0x8000){
-		printf("%c",'-');
-		sprintf(answer, "%c",'-');
-		strcat(ans, answer);
-	}
-	if ((sp->st_mode & 0xF000) == 0x4000){
-		printf("%c",'d');
-		sprintf(answer, "%c",'d');
-		strcat(ans, answer);
-	}
-	if ((sp->st_mode & 0xF000) == 0xA000){
-		printf("%c",'l');
-		sprintf(answer, "%c",'l');
-		strcat(ans, answer);
-	}
-
-	for (i=8; i >= 0; i--){
-		if (sp->st_mode & (1 << i))
-		{
-			printf("%c", t1[i]);
-			sprintf(answer, "%c", t1[i]);
-			strcat(ans, answer);
-		}
-		else{
-			printf("%c", t2[i]);
-			sprintf(answer, "%c", t2[i]);
-			strcat(ans, answer);
-		}
-	}
-
-	printf("%4d ",sp->st_nlink);
-	sprintf(answer, "%4d ",sp->st_nlink);
-	strcat(ans, answer);
-	printf("%4d ",sp->st_gid);
-	sprintf(answer,"%4d ",sp->st_gid);
-	strcat(ans, answer);
-	printf("%4d ",sp->st_uid);
-	sprintf(answer, "%4d ",sp->st_uid);
-	strcat(ans, answer);
-	printf("%8d ",sp->st_size);
-	sprintf(answer, "%8d ",sp->st_size);
-	strcat(ans, answer);
-
-  // print time
-	strcpy(ftime, ctime(&sp->st_ctime));
-	ftime[strlen(ftime)-1] = 0;
-	printf("%s  ",ftime);
-	sprintf(answer, "%s  ",ftime);
-	strcat(ans, answer);	
-  // print name
-	printf("%s", basename(fname));  
-	sprintf(answer,"%s", basename(fname));
-	strcat(ans, answer);
-
-
-  // print -> linkname if it's a symbolic file
-  if ((sp->st_mode & 0xF000)== 0xA000){ // YOU FINISH THIS PART
-     // use readlink() SYSCALL to read the linkname
-     // printf(" -> %s", linkname);
+    i++;
   }
-  printf("\n");
-  write(newsock, ans, MAX);
+
+
+  if(newlines != 2) return 0;
+
+  //split id from buf
+  id = (char *)malloc(sizeof(char) * (n1 + 1));
+  memcpy(id, buf, n1);
+  id[n1] = 0;
+
+  //split name from buf
+  name = (char *)malloc(sizeof(char) * (n2 - n1));
+  memcpy(name, buf + n1 + 1, n2 - n1 - 1);
+  name[n2 - n1 - 1] = 0;
+
+  num_id = atoi(id);
+
+  if(num_id == 0) return 0;
+
+  for(i = 0; i < NUM_IDS; i++)
+  {
+    if(num_id == ids[i]) break; //id exists in the ids array
+  }
+
+  if(i >= NUM_IDS) return 0; // not found
+
+  //at this point i is the index
+  if(strcmp(names[i], name) == 0)
+  {
+    return i + 1; //otherwise user 1 would look like false
+  }
+
+  return 0;
 }
 
-int ls_dir(char *dname)
-{	
-	char path[1000];
-	char answer[MAX];
-	bzero(answer, MAX);
-	strcpy(path,dname);
-	DIR *dp;
-	struct dirent *files;
-    /*structure for storing inode numbers and files in dir
-    struct dirent
-    {
-        ino_t d_ino;
-        char d_name[NAME_MAX+1]
-    }
-    */
-    if((dp=opendir(path))==NULL)
-    	perror("dir\n");
-    char newp[1000];
-    struct stat buf;
-    while((files=readdir(dp))!=NULL)
-    {
+int password(char *buf, int user)
+{
 
-    	if(!strcmp(files->d_name,".") || !strcmp(files->d_name,".."))
-    		continue;
+  if((user < 0) || user >= NUM_IDS) return 0;
 
-        //strcpy(newp,path);
-        //strcat(newp,"/");
-    	strcpy(newp,files->d_name); 
-        //printf("%s\n",newp);
+  if(strcmp(buf, passwords[user]) == 0) return 1;
 
-    	ls_file(newp);
-
-            //stat function return a structure of information about the file    
-    	if(stat(newp,&buf)==-1)
-    		perror("stat");
-
-    }
-
-	write(newsock, "0", 2);//tell client you are done	
+  return 0;
 }
-
-
 
